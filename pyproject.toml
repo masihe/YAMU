@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forecast-ml"
+version = "0.1.0"
+description = "YAMU 잔고예보 변동 생활비 예측 실험 (Story 7.3)"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
