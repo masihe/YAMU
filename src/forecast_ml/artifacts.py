@@ -24,9 +24,15 @@ class LoadedModel:
 
 
 def save(model_dir: Path, horizon: int, model, features: list[str], meta: dict) -> None:
-    """model_dir/h{horizon}.joblib과 h{horizon}.meta.json을 쓴다."""
+    """model_dir/h{horizon}.joblib과 h{horizon}.meta.json을 쓴다.
+
+    두 단계 모델은 이 저장소의 클래스 없이도 읽히도록 scikit-learn 모델 두 개를 사전({"classifier", "regressor"})으로 쓴다.
+    """
+    from forecast_ml.models import TwoStage
+
     model_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, model_dir / f"h{horizon}.joblib")
+    stored = {"classifier": model.classifier, "regressor": model.regressor} if isinstance(model, TwoStage) else model
+    joblib.dump(stored, model_dir / f"h{horizon}.joblib")
     record = {**meta, "horizon": horizon, "features": features, "sklearn_version": sklearn.__version__,
               "history_days": HISTORY_DAYS}
     (model_dir / f"h{horizon}.meta.json").write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -43,5 +49,10 @@ def load_all(model_dir: Path) -> dict[int, LoadedModel]:
         horizon = int(path.stem[1:])
         if meta.get("horizon") != horizon:
             raise ValueError(f"{path.name}의 horizon이 설명과 다릅니다")
-        loaded[horizon] = LoadedModel(horizon, joblib.load(path), list(meta["features"]), meta)
+        model = joblib.load(path)
+        if isinstance(model, dict):
+            from forecast_ml.models import TwoStage
+
+            model = TwoStage(model["classifier"], model["regressor"])
+        loaded[horizon] = LoadedModel(horizon, model, list(meta["features"]), meta)
     return loaded

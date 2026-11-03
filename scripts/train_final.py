@@ -1,6 +1,7 @@
-"""최종 모델 학습·저장: HGB_POISSON, 세 규칙(이상거래·큰 지출·반복 지출) 제외 데이터, 모든 사람·가능한 전 기간.
+"""최종 모델 학습·저장: HGB_POISSON 또는 TWO_STAGE_TREE(--model), 세 규칙(이상거래·큰 지출·반복 지출) 제외 데이터, 모든 사람·가능한 전 기간.
 
 사용: .venv\\Scripts\\python.exe -I scripts\\train_final.py [--horizons 7 14 30] [--eval-runs <runs 폴더 이름>...]
+      [--model TWO_STAGE_TREE] [--large-amount 1000000]
 결과: models/<모델 버전>/h{H}.joblib, h{H}.meta.json (커밋하지 않음)
 """
 
@@ -18,7 +19,7 @@ from forecast_ml.features import make_features
 REPO = Path(__file__).resolve().parents[1]
 CARD_ZIPS = ("TL_카드거래.zip", "VL_카드거래.zip")
 VARIANT = "fraud+large+recurring"
-MODEL = "HGB_POISSON"
+MODELS = ("HGB_POISSON", "TWO_STAGE_TREE")
 
 
 def main() -> None:
@@ -28,10 +29,11 @@ def main() -> None:
     parser.add_argument("--horizons", type=int, nargs="+", default=[7, 14, 30])
     parser.add_argument("--eval-runs", nargs="*", default=[], help="이 모델을 평가한 runs 폴더 이름(설명에 남김)")
     parser.add_argument("--large-amount", type=int, default=None, help="큰 지출 기준(원). 없으면 체크 거래 상위 1%%")
+    parser.add_argument("--model", default="HGB_POISSON", choices=MODELS)
     args = parser.parse_args()
     zips = [args.data_dir / name for name in CARD_ZIPS]
     variant = VARIANT if args.large_amount is None else VARIANT.replace("large", f"large{args.large_amount}")
-    version = f"hgb-poisson-{datetime.now():%Y%m%d}-{variant.replace('+', '-')}"
+    version = f"{args.model.lower().replace('_', '-')}-{datetime.now():%Y%m%d}-{variant.replace('+', '-')}"
     out_dir = args.models_dir / version
     if out_dir.exists():
         raise SystemExit(f"이미 있습니다: {out_dir}")
@@ -42,17 +44,19 @@ def main() -> None:
         card, t = origins(panel, horizon)
         X = make_features(panel, card, t, horizon, "core")
         y = baselines.actual(panel, card, t, horizon).astype(np.float64)
-        model = models.build(MODEL, {}).fit(X, y)
-        meta = {"model_version": version, "model": MODEL, "variant": variant,
+        model = models.build(args.model, {}).fit(X, y)
+        trees = ({"classifier": int(model.classifier.n_iter_), "regressor": int(model.regressor.n_iter_)}
+                 if isinstance(model, models.TwoStage) else int(model.n_iter_))
+        meta = {"model_version": version, "model": args.model, "variant": variant,
                 "exclusions": {"fraud": "이상거래여부 1", "large": large_rule,
                                "recurring": "같은 카드·가맹점·금액이 3개 이상의 달"},
                 "target": f"다음 {horizon}일 체크(승인거래코드 10·11) 소비 합계(원)",
                 "training": {"rows": int(len(y)), "people": int(len(np.unique(card))),
                              "from": str(panel.days[t.min()].date()), "to": str(panel.days[t.max()].date()),
-                             "trees": int(model.n_iter_)},
+                             "trees": trees},
                 "evaluated_in": args.eval_runs, "trained_at": datetime.now().isoformat(timespec="seconds")}
         artifacts.save(out_dir, horizon, model, list(X.columns), meta)
-        print(horizon, "rows", len(y), "trees", model.n_iter_)
+        print(horizon, "rows", len(y), "trees", trees)
     print(out_dir)
 
 
