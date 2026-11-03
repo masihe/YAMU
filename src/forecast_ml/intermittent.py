@@ -53,6 +53,32 @@ def tsb_daily(spend: np.ndarray, alpha: float, beta: float) -> np.ndarray:
     return out
 
 
+def tsb_window(spend: np.ndarray, card: np.ndarray, t: np.ndarray, alpha: float, beta: float,
+               window: int = 90) -> np.ndarray:
+    """(카드, 기준일)마다 기준일까지 최근 window일(기준일 포함)만 보고 계산한 TSB 하루 예측.
+
+    서비스는 계좌마다 최근 90일 남짓만 받으므로, 전체 기록을 훑는 tsb_daily 대신 이것이 실제 대체 계산과 같다.
+    상태는 창의 첫날 0에서 시작한다. 창이 기록 앞으로 넘어가는 날은 0원으로 본다.
+    """
+    if not (0 < alpha <= 1 and 0 < beta <= 1):
+        raise ValueError("alpha·beta는 0 초과 1 이하")
+    n = len(card)
+    z = np.zeros(n)
+    d = np.zeros(n)
+    started = np.zeros(n, dtype=bool)
+    start = t - window + 1
+    for k in range(window):
+        day = start + k
+        x = np.where(day >= 0, spend[card, np.maximum(day, 0)], 0).astype(np.float64)
+        pos = x > 0
+        first = pos & ~started
+        later = pos & started
+        z = np.where(first, x, np.where(later, z + alpha * (x - z), z))
+        started |= pos
+        d = np.where(started, d + beta * (pos.astype(np.float64) - d), 0.0)
+    return d * z
+
+
 def forecast(daily: np.ndarray, card: np.ndarray, t: np.ndarray, horizon: int) -> np.ndarray:
     """기준일 t의 하루 예측 × horizon, 원 단위 반올림."""
     return np.floor(daily[card, t] * horizon + 0.5).astype(np.int64)

@@ -26,8 +26,9 @@ def to_markdown(results: dict) -> str:
     for key, block in results.items():
         boot = block["bootstrap"]
         out.append(f"\n### {key} (평가 {block['rows']}건, {boot['people']}명)\n")
-        out.append("| 방식 | MAE | 편향(%) [95%] | vs LAST_7D MAE(%) [95%] | vs TSB MAE(%) [95%] | 통과 LAST_7D 점/구간 | 통과 TSB 점/구간 |")
-        out.append("|---|---|---|---|---|---|---|")
+        out.append("| 방식 | MAE | 편향(%) [95%] | vs LAST_7D MAE(%) [95%] | vs TSB MAE(%) [95%] | vs TSB_90D MAE(%) [95%] | "
+                   "통과 LAST_7D 점/구간 | 통과 TSB 점/구간 | 통과 TSB_90D 점/구간 |")
+        out.append("|---|---|---|---|---|---|---|---|---|")
         for name, v in sorted(block["verdict"].items(), key=lambda kv: kv[1]["metrics"]["MAE"]):
             m = v["metrics"]
             b = boot["bias"][name]
@@ -41,7 +42,8 @@ def to_markdown(results: dict) -> str:
                 return "-" if j is None else f"{'O' if j['point'] else 'x'}/{'O' if j['interval'] else 'x'}"
 
             out.append(f"| {name} | {m['MAE']:,.0f} | {m['rel_bias'] * 100:+.1f} [{b['low'] * 100:+.1f}, {b['high'] * 100:+.1f}] | "
-                       f"{ci('LAST_7D')} | {ci('TSB')} | {mark('LAST_7D')} | {mark('TSB')} |")
+                       f"{ci('LAST_7D')} | {ci('TSB')} | {ci('TSB_90D')} | {mark('LAST_7D')} | {mark('TSB')} | "
+                       f"{mark('TSB_90D')} |")
     return "\n".join(out) + "\n"
 
 

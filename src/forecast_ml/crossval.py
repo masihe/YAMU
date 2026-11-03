@@ -10,7 +10,7 @@ from forecast_ml.backtest import metrics
 from forecast_ml.experiment import BIAS_LIMIT
 
 FOLDS = 5
-REFERENCES = ("LAST_7D", "TSB")
+REFERENCES = ("LAST_7D", "TSB", "TSB_90D")
 
 
 def pool(blocks: list[dict]) -> dict:

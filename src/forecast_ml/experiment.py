@@ -17,6 +17,8 @@ from forecast_ml.features import make_features
 BIAS_LIMIT = 0.10
 GATE_BASELINE = "LAST_7D"
 SBA_GRID = [{"alpha": a} for a in (0.05, 0.1, 0.2, 0.3)]
+TSB_WINDOW = 90  # 서비스가 받는 기록 길이
+BLEND_GRID = [{"w": round(w / 10, 1)} for w in range(11)]
 TSB_GRID = [{"alpha": a, "beta": b} for a in (0.05, 0.1, 0.2, 0.3) for b in (0.02, 0.05, 0.1, 0.2)]
 
 
@@ -68,7 +70,7 @@ def passes(test_metrics: dict, gate_mae: float) -> bool:
 
 def run(panel: Panel, horizon: int, val_from: pd.Timestamp, test_from: pd.Timestamp, feature_set: str,
         test_to: pd.Timestamp | None = None, bucket: int = 0, keep_predictions: bool = False) -> dict:
-    """Baseline 7종과 모델 6종의 검증 선택 결과와 평가 지표.
+    """Baseline 7종(+ TSB_90D)과 모델 6종(+ STACK_HGB·BLEND_HGB_TSB·H30_SCALED)의 검증 선택 결과와 평가 지표.
 
     keep_predictions면 결과마다 "pred"(평가 구간 예측)와 블록에 "test_card"·"test_y"를 더한다(JSON에 쓰지 않는 numpy 값).
     """
@@ -93,17 +95,60 @@ def run(panel: Panel, horizon: int, val_from: pd.Timestamp, test_from: pd.Timest
         results[name] = {"kind": "baseline", "params": params, "val": val, "test": metrics(pred[s.test], s.y[s.test]),
                          "pred": pred[s.test]}
 
+    # 서비스와 같은 조건의 TSB(최근 90일만). 2026-11-03 사전 등록의 판정 기준선
+    scores = []
+    cache = {}
+    for params in TSB_GRID:
+        cache[tuple(params.items())] = d = intermittent.tsb_window(panel.spend, s.card, s.t, window=TSB_WINDOW, **params)
+        scores.append((params, metrics(np.floor(d * horizon + 0.5)[s.val], s.y[s.val])))
+    params, val = choose(scores)
+    tsb90 = np.floor(cache[tuple(params.items())] * horizon + 0.5).astype(np.int64)
+    results["TSB_90D"] = {"kind": "baseline", "params": params, "val": val, "test": metrics(tsb90[s.test], s.y[s.test]),
+                          "pred": tsb90[s.test]}
+
     X = make_features(panel, s.card, s.t, horizon, feature_set)
     y = s.y.astype(np.float64)
+    hgb_val = hgb_test = None
     for name, grid in models.GRIDS.items():
         scores = []
         for params in grid:
             model = models.build(name, params).fit(X[s.fit], y[s.fit])
-            scores.append((params, metrics(model.predict(X[s.val]), s.y[s.val])))
+            val_pred = model.predict(X[s.val])
+            scores.append((params, metrics(val_pred, s.y[s.val])))
         params, val = choose(scores)
         model = models.build(name, params).fit(X[s.train], y[s.train])
         pred = model.predict(X[s.test])
         results[name] = {"kind": "model", "params": params, "val": val, "test": metrics(pred, s.y[s.test]), "pred": pred}
+        if name == "HGB_POISSON":
+            hgb_val, hgb_test = val_pred, pred
+
+    # STACK_HGB: 단순 방식 예측 3개를 특징으로 더한 HGB_POISSON
+    stacked = X.assign(tsb90_pred=tsb90, last7_pred=baselines.last_week(panel, s.card, s.t, horizon),
+                       avg28_pred=baselines.avg_recent(panel, s.card, s.t, horizon))
+    model = models.build("HGB_POISSON", {}).fit(stacked[s.fit], y[s.fit])
+    val = metrics(model.predict(stacked[s.val]), s.y[s.val])
+    model = models.build("HGB_POISSON", {}).fit(stacked[s.train], y[s.train])
+    pred = model.predict(stacked[s.test])
+    results["STACK_HGB"] = {"kind": "model", "params": {}, "val": val, "test": metrics(pred, s.y[s.test]), "pred": pred}
+
+    # BLEND_HGB_TSB: w × HGB_POISSON + (1 − w) × TSB_90D, w는 검증 구간에서
+    scores = [(p, metrics(p["w"] * hgb_val + (1 - p["w"]) * tsb90[s.val], s.y[s.val])) for p in BLEND_GRID]
+    params, val = choose(scores)
+    pred = params["w"] * hgb_test + (1 - params["w"]) * tsb90[s.test]
+    results["BLEND_HGB_TSB"] = {"kind": "model", "params": params, "val": val, "test": metrics(pred, s.y[s.test]),
+                                "pred": pred}
+
+    # H30_SCALED: 30일 정답으로 학습한 HGB_POISSON × horizon/30. core 특징은 horizon과 상관없다
+    if horizon == 30:
+        pred = hgb_test
+    else:
+        if feature_set != "core":
+            raise ValueError("H30_SCALED는 core 특징에서만 쓴다")
+        s30 = split(panel, 30, val_from, test_from, test_to, bucket)
+        X30 = make_features(panel, s30.card, s30.t, 30, feature_set)
+        model = models.build("HGB_POISSON", {}).fit(X30[s30.train], s30.y[s30.train].astype(np.float64))
+        pred = model.predict(X[s.test]) * horizon / 30
+    results["H30_SCALED"] = {"kind": "model", "params": {}, "test": metrics(pred, s.y[s.test]), "pred": pred}
 
     gate_mae = results[GATE_BASELINE]["test"]["MAE"]
     for r in results.values():
