@@ -56,11 +56,11 @@ class Panel:
 
 
 def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float = 0.99,
-               recurring_months: int = 3) -> tuple[pd.DataFrame, float]:
+               recurring_months: int = 3, large_amount: int | None = None) -> tuple[pd.DataFrame, float]:
     """체크 거래만 남기고 제외 규칙을 적용한다. 돌려주는 비율은 제외로 빠진 체크 금액의 비중이다.
 
     - fraud: 이상거래여부 1
-    - large: 체크 거래 금액 분위수(large_quantile) 초과
+    - large: 체크 거래 금액 분위수(large_quantile) 초과. large_amount(원)를 주면 분위수 대신 그 금액 초과
     - recurring: 같은 카드·가맹점·금액이 서로 다른 recurring_months개 이상의 달에 나타남
     """
     unknown = set(exclude) - EXCLUSIONS
@@ -71,7 +71,8 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
     if "fraud" in exclude:
         keep &= check["fraud"] != "1"
     if "large" in exclude:
-        keep &= check["amount"] <= check["amount"].quantile(large_quantile)
+        limit = check["amount"].quantile(large_quantile) if large_amount is None else large_amount
+        keep &= check["amount"] <= limit
     if "recurring" in exclude:
         month = check["date"].dt.to_period("M")
         months = check.assign(month=month).groupby(["card", "store", "amount"])["month"].transform("nunique")
@@ -82,9 +83,9 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
 
 
 def build_panel(df: pd.DataFrame, exclude: frozenset[str] = frozenset(), large_quantile: float = 0.99,
-                recurring_months: int = 3) -> Panel:
+                recurring_months: int = 3, large_amount: int | None = None) -> Panel:
     """체크를 한 번이라도 쓴 카드KEY만 모아 일별 체크 소비 행렬과 확인된 달을 만든다."""
-    check, removed_share = check_rows(df, exclude, large_quantile, recurring_months)
+    check, removed_share = check_rows(df, exclude, large_quantile, recurring_months, large_amount)
     cards = np.array(sorted(df.loc[df["code"].isin(CHECK_CODES), "card"].unique()))
     days = pd.date_range(df["date"].min().to_period("M").start_time, df["date"].max().to_period("M").end_time.normalize(),
                          freq="D")

@@ -27,20 +27,24 @@ def main() -> None:
     parser.add_argument("--models-dir", type=Path, default=REPO / "models")
     parser.add_argument("--horizons", type=int, nargs="+", default=[7, 14, 30])
     parser.add_argument("--eval-runs", nargs="*", default=[], help="이 모델을 평가한 runs 폴더 이름(설명에 남김)")
+    parser.add_argument("--large-amount", type=int, default=None, help="큰 지출 기준(원). 없으면 체크 거래 상위 1%%")
     args = parser.parse_args()
     zips = [args.data_dir / name for name in CARD_ZIPS]
-    version = f"hgb-poisson-{datetime.now():%Y%m%d}-{VARIANT.replace('+', '-')}"
+    variant = VARIANT if args.large_amount is None else VARIANT.replace("large", f"large{args.large_amount}")
+    version = f"hgb-poisson-{datetime.now():%Y%m%d}-{variant.replace('+', '-')}"
     out_dir = args.models_dir / version
     if out_dir.exists():
         raise SystemExit(f"이미 있습니다: {out_dir}")
-    panel = build_panel(load_transactions(zips), VARIANTS[VARIANT])
+    panel = build_panel(load_transactions(zips), VARIANTS[VARIANT], large_amount=args.large_amount)
+    large_rule = ("체크 거래 금액 99% 분위수 초과" if args.large_amount is None
+                  else f"체크 거래 한 건 {args.large_amount:,}원 초과")
     for horizon in args.horizons:
         card, t = origins(panel, horizon)
         X = make_features(panel, card, t, horizon, "core")
         y = baselines.actual(panel, card, t, horizon).astype(np.float64)
         model = models.build(MODEL, {}).fit(X, y)
-        meta = {"model_version": version, "model": MODEL, "variant": VARIANT,
-                "exclusions": {"fraud": "이상거래여부 1", "large": "체크 거래 금액 99% 분위수 초과",
+        meta = {"model_version": version, "model": MODEL, "variant": variant,
+                "exclusions": {"fraud": "이상거래여부 1", "large": large_rule,
                                "recurring": "같은 카드·가맹점·금액이 3개 이상의 달"},
                 "target": f"다음 {horizon}일 체크(승인거래코드 10·11) 소비 합계(원)",
                 "training": {"rows": int(len(y)), "people": int(len(np.unique(card))),

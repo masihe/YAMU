@@ -1,6 +1,7 @@
 """평가 보강 실행: 제외 규칙 × H × 평가 연도 2023·2024 × 사람 5묶음. runs/<날짜시각>-crossval/에 남긴다.
 
 사용: .venv\\Scripts\\python.exe -I scripts\\crossval.py [--feature-set core] [--horizons 7 14 30] [--variants fraud+large+recurring]
+      [--large-amount 1000000]  # 큰 지출을 상위 1% 대신 한 건 금액(원) 초과로 뺌
 """
 
 import argparse
@@ -51,17 +52,19 @@ def main() -> None:
     parser.add_argument("--feature-set", default="core", choices=["core", "core+calendar"])
     parser.add_argument("--horizons", type=int, nargs="+", default=list(HORIZONS))
     parser.add_argument("--variants", nargs="+", default=list(VARIANTS), choices=list(VARIANTS))
+    parser.add_argument("--large-amount", type=int, default=None, help="큰 지출 기준(원). 없으면 체크 거래 상위 1%%")
     args = parser.parse_args()
     zips = [args.data_dir / name for name in CARD_ZIPS]
     config = {"script": "scripts/crossval.py", "inputs": zips, "feature_set": args.feature_set, "years": YEARS,
               "folds": crossval.FOLDS, "references": crossval.REFERENCES, "horizons": args.horizons,
-              "variants": {k: sorted(VARIANTS[k]) for k in args.variants}, "model_grids": models.GRIDS,
+              "variants": {k: sorted(VARIANTS[k]) for k in args.variants}, "large_amount": args.large_amount,
+              "model_grids": models.GRIDS,
               "judge": "점 = 합친 지표로 |편향| <= 10% 그리고 MAE < 기준, 구간 = 점 편향 조건 + MAE 비율 95% 상한 < 0"}
     run_dir = new_run(args.runs_dir, "crossval", config, REPO)
     df = load_transactions(zips)
     results = {}
     for variant in args.variants:
-        panel = build_panel(df, VARIANTS[variant])
+        panel = build_panel(df, VARIANTS[variant], large_amount=args.large_amount)
         for horizon in args.horizons:
             for year, (val_from, test_from, test_to) in YEARS.items():
                 blocks = [experiment.run(panel, horizon, pd.Timestamp(val_from), pd.Timestamp(test_from), args.feature_set,
