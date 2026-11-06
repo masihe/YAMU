@@ -7,9 +7,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from forecast_ml import recurring
+
 # 활용 가이드라인 31쪽: 10 체크계좌승인, 11 체크신용승인
 CHECK_CODES = frozenset({"10", "11"})
-EXCLUSIONS = frozenset({"fraud", "large", "recurring"})
+EXCLUSIONS = frozenset({"fraud", "large", "recurring", "recurring_once"})
 _COLUMNS = {1: "date", 4: "card", 5: "amount", 10: "fraud", 15: "code", 30: "store"}
 
 
@@ -61,7 +63,9 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
 
     - fraud: 이상거래여부 1
     - large: 체크 거래 금액 분위수(large_quantile) 초과. large_amount(원)를 주면 분위수 대신 그 금액 초과
-    - recurring: 같은 카드·가맹점·금액이 서로 다른 recurring_months개 이상의 달에 나타남
+    - recurring: 같은 카드·가맹점·금액이 서로 다른 recurring_months개 이상의 달에 나타남(전체 기간, 11/6 이전 학습 규칙)
+    - recurring_once: 서비스(BE) 규칙. 그 결제의 달과 앞 5개 달 중 같은 키가 3개 이상의 달에 나오고 그중 두 번 이상 나온 달이
+      없음(recurring.flag "ONCE_A_MONTH", 과거만 봄, S15P31E103-304). BE처럼 이상거래·큰 지출까지 모든 체크 거래로 센다
     """
     unknown = set(exclude) - EXCLUSIONS
     if unknown:
@@ -77,6 +81,8 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
         month = check["date"].dt.to_period("M")
         months = check.assign(month=month).groupby(["card", "store", "amount"])["month"].transform("nunique")
         keep &= months < recurring_months
+    if "recurring_once" in exclude:
+        keep &= ~recurring.flag(check[["date", "card", "store", "amount"]], "ONCE_A_MONTH")
     total = check["amount"].sum()
     removed = check.loc[~keep, "amount"].sum()
     return check[keep], float(removed / total) if total else 0.0

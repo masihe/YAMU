@@ -13,6 +13,7 @@ HORIZONS = (7, 14)
 VARIANTS = {
     "fraud": frozenset({"fraud"}),
     "fraud+large+recurring": frozenset({"fraud", "large", "recurring"}),
+    "fraud+large+recurring_once": frozenset({"fraud", "large", "recurring_once"}),
 }
 ACTIVE_DAYS = 90
 BASELINES = {

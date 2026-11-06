@@ -5,6 +5,7 @@
 90일은 기존 교차검증(runs/20261103-110529-crossval)의 TWO_STAGE_TREE와 같은 값이 나와야 한다.
 
 사용: .venv\\Scripts\\python.exe -I scripts\\short_history.py [--horizons 14 30] [--lengths 14 30 60 90]
+      [--variant fraud+large+recurring_once]  # 반복 지출 제외 규칙(기본은 11/5 실행과 같은 전체 기간 규칙)
 """
 
 import argparse
@@ -98,14 +99,15 @@ def main() -> None:
     parser.add_argument("--runs-dir", type=Path, default=REPO / "runs")
     parser.add_argument("--horizons", type=int, nargs="+", default=[14, 30])
     parser.add_argument("--lengths", type=int, nargs="+", default=list(short_history.LENGTHS))
+    parser.add_argument("--variant", default=VARIANT, choices=[k for k in VARIANTS if "large" in k])
     args = parser.parse_args()
     zips = [args.data_dir / name for name in CARD_ZIPS]
-    config = {"script": "scripts/short_history.py", "inputs": zips, "variant": VARIANT, "large_amount": LARGE_AMOUNT,
+    config = {"script": "scripts/short_history.py", "inputs": zips, "variant": args.variant, "large_amount": LARGE_AMOUNT,
               "model": short_history.MODEL, "years": YEARS, "folds": crossval.FOLDS, "horizons": args.horizons,
               "lengths": args.lengths,
               "judge": "기록에 사용 있는 행만. |AI 편향| <= 10% 그리고 AI÷TSB MAE − 1의 95% 상한 < 0. 두 해 모두 통과한 가장 짧은 길이"}
     run_dir = new_run(args.runs_dir, "short-history", config, REPO)
-    panel = build_panel(load_transactions(zips), VARIANTS[VARIANT], large_amount=LARGE_AMOUNT)
+    panel = build_panel(load_transactions(zips), VARIANTS[args.variant], large_amount=LARGE_AMOUNT)
     results = {}
     saved = {}
     for horizon in args.horizons:
