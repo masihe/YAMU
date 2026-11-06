@@ -65,7 +65,9 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
     - large: 체크 거래 금액 분위수(large_quantile) 초과. large_amount(원)를 주면 분위수 대신 그 금액 초과
     - recurring: 같은 카드·가맹점·금액이 서로 다른 recurring_months개 이상의 달에 나타남(전체 기간, 11/6 이전 학습 규칙)
     - recurring_once: 서비스(BE) 규칙. 그 결제의 달과 앞 5개 달 중 같은 키가 3개 이상의 달에 나오고 그중 두 번 이상 나온 달이
-      없음(recurring.flag "ONCE_A_MONTH", 과거만 봄, S15P31E103-304). BE처럼 이상거래·큰 지출까지 모든 체크 거래로 센다
+      없음(recurring.flag "ONCE_A_MONTH", S15P31E103-304). BE처럼 이상거래·큰 지출까지 모든 체크 거래로 센다.
+      한계: 그 결제의 달은 달 전체 건수로 세므로, 기준일 뒤 같은 달에 같은 키 결제가 또 있으면 서비스(기준일까지 셈)는 빼는
+      첫 결제를 남긴다(recurring.provisional_once, 금액의 0.24%, 평가 판정에는 영향 없음 — reports/7.3.8-retrain.md)
     """
     unknown = set(exclude) - EXCLUSIONS
     if unknown:

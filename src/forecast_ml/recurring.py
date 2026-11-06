@@ -37,6 +37,27 @@ def month_counts(check: pd.DataFrame) -> pd.Series:
     return check.assign(month=month).groupby(["card", "store", "amount", "month"]).size().sort_index()
 
 
+def provisional_once(check: pd.DataFrame) -> pd.DataFrame:
+    """ONCE_A_MONTH에서 기준일에 따라 판정이 갈리는 결제와 그 기간.
+
+    그 달 같은 키의 첫 결제이고 다른 조건(6개월 중 3개 달, 다른 달에 두 번 나온 적 없음)은 맞지만 같은 달에 같은 키 결제가
+    또 있는 경우다. 서비스(기준일까지만 셈)는 기준일이 [date, until) 안이면 반복으로 빼고, 달 전체로 세는 flag()는 남긴다.
+    돌려주는 표: check의 해당 행(date·card·store·amount)과 until(같은 달 두 번째 같은 키 결제일). 같은 날이면 기간이 비어 있다.
+    """
+    counts = month_counts(check)
+    months, multi = _window(counts)
+    own_multi = counts.to_numpy() >= 2
+    per_key_month = pd.Series((months >= MIN_MONTHS) & own_multi & (multi - own_multi == 0), index=counts.index)
+    candidate = _rows(check, per_key_month).astype(bool)
+    month = check["date"].dt.year * 12 + check["date"].dt.month
+    ordered = check.assign(month=month).sort_values(["card", "store", "amount", "month", "date"], kind="stable")
+    rank = ordered.groupby(["card", "store", "amount", "month"]).cumcount()
+    second = ordered[rank == 1].set_index(["card", "store", "amount", "month"])["date"]
+    first = ordered[(rank == 0) & candidate.loc[ordered.index]]
+    until = second.reindex(pd.MultiIndex.from_frame(first[["card", "store", "amount", "month"]])).to_numpy()
+    return first[["date", "card", "store", "amount"]].assign(until=until)
+
+
 def own_month_count(check: pd.DataFrame) -> pd.Series:
     """행마다 같은 키가 그 결제의 달에 나온 수."""
     return _rows(check, month_counts(check))

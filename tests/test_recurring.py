@@ -87,5 +87,32 @@ class FlagTest(unittest.TestCase):
             recurring.flag(rows(*netflix(1)), "NOPE")
 
 
+class ProvisionalOnceTest(unittest.TestCase):
+    """달 전체로 세는 flag()와 기준일까지만 세는 서비스의 판정이 갈리는 결제(Codex 검토, S15P31E103-304)."""
+
+    def test_first_payment_is_recurring_only_until_second_same_month_payment(self):
+        # 4·5·6월 10일 한 번씩, 6월 25일 한 번 더: 6/10~6/24 기준 서비스는 6/10 결제를 빼고, 달 전체로 세면 남긴다
+        df = rows(("2024-04-10", "c1", "s", 10000), ("2024-05-10", "c1", "s", 10000),
+                  ("2024-06-10", "c1", "s", 10000), ("2024-06-25", "c1", "s", 10000))
+        self.assertFalse(recurring.flag(df, "ONCE_A_MONTH").any())
+        before_25th = df[df["date"] < "2024-06-25"]
+        self.assertEqual(recurring.flag(before_25th, "ONCE_A_MONTH").tolist(), [False, False, True])
+
+        got = recurring.provisional_once(df)
+
+        self.assertEqual(got.index.tolist(), [2])
+        self.assertEqual(got["until"].tolist(), [pd.Timestamp("2024-06-25")])
+
+    def test_no_provisional_when_another_month_had_two(self):
+        # 5월에 두 번 나온 키는 6월 첫 결제 시점에도 반복이 아니다
+        df = rows(("2024-04-10", "c1", "s", 10000), ("2024-05-10", "c1", "s", 10000), ("2024-05-20", "c1", "s", 10000),
+                  ("2024-06-10", "c1", "s", 10000), ("2024-06-25", "c1", "s", 10000))
+        self.assertTrue(recurring.provisional_once(df).empty)
+
+    def test_no_provisional_for_plain_subscription_or_coffee(self):
+        self.assertTrue(recurring.provisional_once(rows(*netflix(5))).empty)
+        self.assertTrue(recurring.provisional_once(rows(*coffee_three_times_a_week(4))).empty)
+
+
 if __name__ == "__main__":
     unittest.main()

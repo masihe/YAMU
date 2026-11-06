@@ -24,7 +24,7 @@ VARIANT = "fraud+large+recurring"
 MODELS = ("HGB_POISSON", "TWO_STAGE_TREE")
 RECURRING_RULES = {"recurring": "같은 카드·가맹점·금액이 3개 이상의 달",
                    "recurring_once": "그 결제의 달과 앞 5개 달 중 같은 카드·가맹점·금액이 3개 이상의 달에 나오고 "
-                                     "그중 두 번 이상 나온 달이 없음(과거만 봄)"}
+                                     "그중 두 번 이상 나온 달이 없음(그 결제의 달은 달 전체 건수로 셈)"}
 # 고를 수 있는 변형 → 그 변형의 반복 지출 제외 이름
 RECURRING_VARIANTS = {"fraud+large+recurring": "recurring", "fraud+large+recurring_once": "recurring_once"}
 
