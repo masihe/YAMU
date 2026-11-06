@@ -59,8 +59,12 @@ def avg_3m_truncated(panel: Panel, card: np.ndarray, t: np.ndarray, horizon: int
 
 
 def run(panel: Panel, horizon: int, val_from: pd.Timestamp, test_from: pd.Timestamp,
-        test_to: pd.Timestamp | None, bucket: int, lengths: tuple[int, ...] = LENGTHS) -> dict:
-    """한 묶음: 학습(교차검증과 같음) 한 번, 길이마다 평가 구간 예측. JSON에 쓰지 않는 numpy 값을 돌려준다."""
+        test_to: pd.Timestamp | None, bucket: int, lengths: tuple[int, ...] = LENGTHS,
+        fixed_tsb: dict | None = None) -> dict:
+    """한 묶음: 학습(교차검증과 같음) 한 번, 길이마다 평가 구간 예측. JSON에 쓰지 않는 numpy 값을 돌려준다.
+
+    fixed_tsb({"alpha", "beta"})를 주면 그 고정값으로 같은 길이만 본 TSB도 "TSB_FIXED"로 낸다(BE TsbEstimator와 같은 계산).
+    """
     s = split(panel, horizon, val_from, test_from, test_to, bucket)
     X = make_features(panel, s.card, s.t, horizon, "core")
     model = models.build(MODEL, {}).fit(X[s.train], s.y[s.train].astype(np.float64))
@@ -78,6 +82,9 @@ def run(panel: Panel, horizon: int, val_from: pd.Timestamp, test_from: pd.Timest
         out["by_length"][length] = {"AI": ai, "TSB": tsb, "AVG_3M": avg_3m_truncated(panel, card, t, horizon, length),
                                     "active": daily.sum(axis=1) > 0, "spend_days": (daily > 0).sum(axis=1),
                                     "tsb_params": params}
+        if fixed_tsb is not None:
+            fixed = intermittent.tsb_window(panel.spend, card, t, window=length, **fixed_tsb)
+            out["by_length"][length]["TSB_FIXED"] = np.floor(fixed * horizon + 0.5).astype(np.int64)
     return out
 
 
