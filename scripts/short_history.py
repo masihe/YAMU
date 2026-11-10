@@ -7,6 +7,8 @@
 사용: .venv\\Scripts\\python.exe -I scripts\\short_history.py [--horizons 14 30] [--lengths 14 30 60 90]
       [--variant fraud+large+recurring_once]  # 반복 지출 제외 규칙(기본은 11/5 실행과 같은 전체 기간 규칙)
       [--tsb-fixed 0.3 0.2]  # BE 고정값 TSB와의 비교·판정도 냄(2026-11-06, 7일)
+      [--codes credit]  # 신용(00) 생활 소비로 학습·평가(2026-11-10, S15P31E103-404). 기본은 체크
+      [--be-large]  # BE 큰 결제 중앙값 10배 규칙에 걸린 결제도 뺌(서비스 조건, 2026-11-11)
 """
 
 import argparse
@@ -17,7 +19,8 @@ import pandas as pd
 
 from forecast_ml import crossval, short_history
 from forecast_ml.backtest import VARIANTS, metrics
-from forecast_ml.data import build_panel, load_transactions
+from forecast_ml.data import CHECK_CODES, CREDIT_CODES, build_panel, load_transactions
+from forecast_ml.large_rule import INSTALLMENT, load_ordered, with_median_large_excluded
 from forecast_ml.experiment import BIAS_LIMIT
 from forecast_ml.runs import new_run, write_json
 
@@ -26,6 +29,7 @@ CARD_ZIPS = ("TL_카드거래.zip", "VL_카드거래.zip")
 YEARS = {"2023": ("2022-07-01", "2023-01-01", "2024-01-01"), "2024": ("2023-07-01", "2024-01-01", None)}
 VARIANT = "fraud+large+recurring"
 LARGE_AMOUNT = 1_000_000
+CODES = {"check": CHECK_CODES, "credit": CREDIT_CODES}
 
 
 def summarize(blocks: list[dict], length: int) -> dict:
@@ -118,15 +122,19 @@ def main() -> None:
     parser.add_argument("--variant", default=VARIANT, choices=[k for k in VARIANTS if "large" in k])
     parser.add_argument("--tsb-fixed", type=float, nargs=2, metavar=("ALPHA", "BETA"),
                         help="이 고정값 TSB(BE TsbEstimator와 같은 계산)와의 비교·판정도 낸다")
+    parser.add_argument("--codes", default="check", choices=list(CODES), help="학습·평가할 승인거래코드 묶음")
+    parser.add_argument("--be-large", action="store_true", help="BE 큰 결제 중앙값 10배 규칙에 걸린 결제도 뺀다")
     args = parser.parse_args()
     fixed_tsb = None if args.tsb_fixed is None else {"alpha": args.tsb_fixed[0], "beta": args.tsb_fixed[1]}
     zips = [args.data_dir / name for name in CARD_ZIPS]
     config = {"script": "scripts/short_history.py", "inputs": zips, "variant": args.variant, "large_amount": LARGE_AMOUNT,
               "model": short_history.MODEL, "years": YEARS, "folds": crossval.FOLDS, "horizons": args.horizons,
-              "lengths": args.lengths, "tsb_fixed": fixed_tsb,
+              "lengths": args.lengths, "tsb_fixed": fixed_tsb, "codes": sorted(CODES[args.codes]), "be_large": args.be_large,
               "judge": "기록에 사용 있는 행만. |AI 편향| <= 10% 그리고 AI÷TSB MAE − 1의 95% 상한 < 0. 두 해 모두 통과한 가장 짧은 길이"}
     run_dir = new_run(args.runs_dir, "short-history", config, REPO)
-    panel = build_panel(load_transactions(zips), VARIANTS[args.variant], large_amount=LARGE_AMOUNT)
+    df = (with_median_large_excluded(load_ordered(zips), CHECK_CODES | CREDIT_CODES | {INSTALLMENT}) if args.be_large
+          else load_transactions(zips))
+    panel = build_panel(df, VARIANTS[args.variant], large_amount=LARGE_AMOUNT, codes=CODES[args.codes])
     results = {}
     saved = {}
     for horizon in args.horizons:
@@ -141,8 +149,9 @@ def main() -> None:
                 prefix = f"H{horizon}_{year}_L{length}_"
                 saved[prefix + "card"] = np.concatenate([b["card"] for b in blocks])
                 saved[prefix + "y"] = np.concatenate([b["y"] for b in blocks])
-                for field in ("AI", "TSB", "spend_days"):
-                    saved[prefix + field] = np.concatenate([b["by_length"][length][field] for b in blocks])
+                for field in ("AI", "TSB", "spend_days", "TSB_FIXED"):
+                    if field in blocks[0]["by_length"][length]:
+                        saved[prefix + field] = np.concatenate([b["by_length"][length][field] for b in blocks])
             print(key, {length: (r["AI"]["MAE"], r["TSB"]["MAE"], r["pass"]) for length, r in results[key].items()},
                   flush=True)
     np.savez_compressed(run_dir / "predictions.npz", **saved)

@@ -11,6 +11,8 @@ from forecast_ml import recurring
 
 # 활용 가이드라인 31쪽: 10 체크계좌승인, 11 체크신용승인
 CHECK_CODES = frozenset({"10", "11"})
+# 00 국내일시불. 01 할부는 잔고예보에서 큰 결제라 생활비에 넣지 않는다(S15P31E103-404)
+CREDIT_CODES = frozenset({"00"})
 EXCLUSIONS = frozenset({"fraud", "large", "recurring", "recurring_once"})
 _COLUMNS = {1: "date", 4: "card", 5: "amount", 10: "fraud", 15: "code", 30: "store"}
 
@@ -58,8 +60,9 @@ class Panel:
 
 
 def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float = 0.99,
-               recurring_months: int = 3, large_amount: int | None = None) -> tuple[pd.DataFrame, float]:
-    """체크 거래만 남기고 제외 규칙을 적용한다. 돌려주는 비율은 제외로 빠진 체크 금액의 비중이다.
+               recurring_months: int = 3, large_amount: int | None = None,
+               codes: frozenset[str] = CHECK_CODES) -> tuple[pd.DataFrame, float]:
+    """승인거래코드 codes(기본 체크) 거래만 남기고 제외 규칙을 적용한다. 돌려주는 비율은 제외로 빠진 그 거래 금액의 비중이다.
 
     - fraud: 이상거래여부 1
     - large: 체크 거래 금액 분위수(large_quantile) 초과. large_amount(원)를 주면 분위수 대신 그 금액 초과
@@ -72,7 +75,7 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
     unknown = set(exclude) - EXCLUSIONS
     if unknown:
         raise ValueError(f"모르는 제외 규칙: {sorted(unknown)}")
-    check = df[df["code"].isin(CHECK_CODES)].copy()
+    check = df[df["code"].isin(codes)].copy()
     keep = pd.Series(True, index=check.index)
     if "fraud" in exclude:
         keep &= check["fraud"] != "1"
@@ -91,10 +94,11 @@ def check_rows(df: pd.DataFrame, exclude: frozenset[str], large_quantile: float 
 
 
 def build_panel(df: pd.DataFrame, exclude: frozenset[str] = frozenset(), large_quantile: float = 0.99,
-                recurring_months: int = 3, large_amount: int | None = None) -> Panel:
-    """체크를 한 번이라도 쓴 카드KEY만 모아 일별 체크 소비 행렬과 확인된 달을 만든다."""
-    check, removed_share = check_rows(df, exclude, large_quantile, recurring_months, large_amount)
-    cards = np.array(sorted(df.loc[df["code"].isin(CHECK_CODES), "card"].unique()))
+                recurring_months: int = 3, large_amount: int | None = None,
+                codes: frozenset[str] = CHECK_CODES) -> Panel:
+    """codes(기본 체크) 거래를 한 번이라도 쓴 카드KEY만 모아 일별 소비 행렬과 확인된 달을 만든다."""
+    check, removed_share = check_rows(df, exclude, large_quantile, recurring_months, large_amount, codes)
+    cards = np.array(sorted(df.loc[df["code"].isin(codes), "card"].unique()))
     days = pd.date_range(df["date"].min().to_period("M").start_time, df["date"].max().to_period("M").end_time.normalize(),
                          freq="D")
     months = pd.period_range(days[0], days[-1], freq="M")

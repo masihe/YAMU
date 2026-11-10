@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from forecast_ml.data import check_rows
+from forecast_ml.data import CREDIT_CODES, check_rows
 
 
 def rows(amounts: list[int]) -> pd.DataFrame:
@@ -73,3 +73,25 @@ class RecurringOnce(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Codes(unittest.TestCase):
+    """codes로 신용(00) 거래만 골라 같은 제외 규칙을 적용한다(S15P31E103-404)."""
+
+    def test_credit_codes_keep_only_lump_sum_credit(self):
+        df = pd.DataFrame({"date": pd.to_datetime(["2024-01-01"] * 3), "card": "C1", "amount": [1_000, 2_000, 3_000],
+                           "fraud": "0", "code": ["00", "01", "10"], "store": ["S1", "S2", "S3"]})
+
+        kept, _ = check_rows(df, frozenset(), codes=CREDIT_CODES)
+
+        self.assertEqual(kept["amount"].tolist(), [1_000])
+
+    def test_recurring_is_counted_within_the_chosen_codes_only(self):
+        # 같은 가맹점·금액을 1·2월은 체크, 3월은 신용으로 냄. 신용만 보면 한 달뿐이라 반복이 아니다
+        df = dated([("2024-01-15", "netflix", 13_500), ("2024-02-15", "netflix", 13_500),
+                    ("2024-03-15", "netflix", 13_500)])
+        df.loc[2, "code"] = "00"
+
+        kept, _ = check_rows(df, frozenset({"recurring_once"}), codes=CREDIT_CODES)
+
+        self.assertEqual(len(kept), 1)
